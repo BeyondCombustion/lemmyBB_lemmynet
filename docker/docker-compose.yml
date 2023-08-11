@@ -1,5 +1,11 @@
-version: '3.3'
+version: "3.7"
 
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "4"
+    
 services:
   lemmybb:
     image: lemmynet/lemmybb:0.1
@@ -16,43 +22,99 @@ services:
       - lemmy
 
   lemmy-ui:
-    image: dessalines/lemmy-ui:0.16.7
+    # Update this tag name when the software updates
+    image: dessalines/lemmy-ui:0.18.4
+    # use this to build your local lemmy ui image for development
+    # run docker compose up --build
+    # assuming lemmy-ui is cloned besides lemmy directory
+    # build:
+    #   context: ../../lemmy-ui
+    #   dockerfile: dev.dockerfile
     restart: always
-    ports:
-      - "127.0.0.1:8702:1234"
+    # ports:
+    #   - "127.0.0.1:8702:1234"
     environment:
-      - LEMMY_INTERNAL_HOST=lemmy:8536
-      - LEMMY_EXTERNAL_HOST=${LEMMY_UI_HOST}
-      - LEMMY_HTTPS=true
-    depends_on: 
+      # this needs to match the hostname defined in the lemmy service
+      - LEMMY_UI_LEMMY_INTERNAL_HOST=lemmy:8536
+      # set the outside hostname here
+      - LEMMY_UI_LEMMY_EXTERNAL_HOST=lemmy.yourhostname.tld
+      - LEMMY_UI_HTTPS=true
+      - LEMMY_UI_DEBUG=true
+    volumes:
+      - ./volumes/lemmy-ui/extra_themes:/app/extra_theme:Z
+    depends_on:
       - lemmy
+    logging: *default-logging
 
   lemmy:
-    image: dessalines/lemmy:0.16.7
+   lemmy:
+    # Update this tag name when the software updates
+    image: dessalines/lemmy:0.18.4 # use this to build your local lemmy server image for development
+    # run docker compose up --build
+    # build:
+    #  context: ../
+    #  dockerfile: docker/Dockerfile
+    #    args:
+    #      RUST_RELEASE_MODE: release
+    #      CARGO_BUILD_FEATURES: default
+    #      CARGO_BUILD_FEATURES: prometheus-metrics
+    # this hostname is used in nginx reverse proxy and also for lemmy ui to connect to the backend, do not change
+    hostname: lemmy
     restart: always
-    ports:
-      - "127.0.0.1:8703:8536"
     environment:
-      - RUST_LOG=warn
+      - RUST_LOG="warn,lemmy_server=debug,lemmy_api=debug,lemmy_api_common=debug,lemmy_api_crud=debug,lemmy_apub=debug,lemmy_db_schema=debug,lemmy>
+      - RUST_BACKTRACE=full
+    ports:
+      # prometheus metrics available at the path /metrics on port 10002 by default
+      # enable prometheus metrics by setting the CARGO_BUILD_FEATURES build arg above to "prometheus-metrics"
+      - 10002:10002
+      # - "127.0.0.1:8703:8536"
     volumes:
-      - ./lemmy.hjson:/config/config.hjson:ro
+      - ./lemmy.hjson:/config/config.hjson:Z
     depends_on:
-      - pictrs
       - postgres
+      - pictrs
+    logging: *default-logging
 
   postgres:
     image: postgres:15-alpine
-    restart: always
     environment:
       - POSTGRES_USER=lemmy
-      - POSTGRES_PASSWORD=password
+      - POSTGRES_PASSWORD=RepLAcEwIthASeCuRePaSSwOrDRepLAcEwIthASeCuRePaSSwOrDRepLAcEwIthASeCuRePaSSwOrD
       - POSTGRES_DB=lemmy
     volumes:
-      - ./volumes/postgres:/var/lib/postgresql/data
+      - ./volumes/postgres:/var/lib/postgresql/data:Z
+      # - ./customPostgresql.conf:/etc/postgresql.conf
+    restart: always
+    logging: *default-logging
 
   pictrs:
-    image: asonix/pictrs:0.3.1
-    restart: always
+    image: asonix/pictrs:latest
+    hostname: pictrs
+    # we can set options to pictrs like this, here we set max. image size and forced format for conversion
+    # entrypoint: /sbin/tini -- /usr/local/bin/pict-rs -p /mnt -m 4 --image-format webp
+    environment:
+      - PICTRS_OPENTELEMETRY_URL=http://otel:4137
+      - PICTRS__API_KEY=RepLAcEwIthASeCuRePaSSwOrDRepLAcEwIthASeCuRePaSSwOrDRepLAcEwIthASeCuRePaSSwOrD
+      - RUST_LOG=error
+      - RUST_BACKTRACE=full
+      - PICTRS__MEDIA__VIDEO_CODEC=vp9
+      - PICTRS__MEDIA__GIF__MAX_WIDTH=256
+      - PICTRS__MEDIA__GIF__MAX_HEIGHT=256
+      - PICTRS__MEDIA__GIF__MAX_AREA=65536
+      - PICTRS__MEDIA__GIF__MAX_FRAME_COUNT=400
     user: 991:991
     volumes:
-      - ./volumes/pictrs:/mnt
+      - ./volumes/pictrs:/mnt:Z
+    restart: always
+    mem_limit: 200m
+    logging: *default-logging
+    
+  postfix:
+  # Not needed if you are using gmail
+    image: mwader/postfix-relay
+    environment:
+      # Your domain name without any protocol or slashes. e.g. lemmy.yourdomain.net
+      - POSTFIX_myhostname=yourhostname.tld
+    restart: always
+
